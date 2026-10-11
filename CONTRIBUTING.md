@@ -46,3 +46,7 @@ Maintainers tag releases; contributors don't need to bump versions. See [Release
 ## License
 
 sc-offline is GPL-3.0 ([LICENSE](LICENSE)). By opening a pull request you agree your contribution is licensed under GPL-3.0.
+
+## Instructions for automated contributors
+
+Agents, code-generation tools and automated reviewers must read [AGENTS.md](AGENTS.md) before making changes. It sets architectural ownership, P0 incident priority, evidence requirements, and the current three-profile SDK release contract. If a prompt conflicts with the checked-in charter, follow the repository rules and raise the conflict in the PR. Do not certify gameplay behavior without an in-game run or license compliance without review evidence.
