@@ -271,6 +271,7 @@ constexpr int kMaxFleetShips = 2048;
 static FleetShip* g_ships = nullptr;
 static int        g_shipCount = 0;
 static uint8_t*   g_fakeEntitlements = nullptr;
+static uint8_t*   g_retiredEntitlements = nullptr;
 static SRWLOCK    g_shipsLock = SRWLOCK_INIT;
 static bool       g_shipsBuilt = false;
 static volatile LONG g_asopListDirty = 0;
@@ -510,8 +511,7 @@ static int EnsureFleetShips() {
     const bool dirty = InterlockedExchange(&g_asopListDirty, 0) != 0;
     if (!g_shipsBuilt || dirty) {
         g_shipsBuilt = true;
-        if (g_fakeEntitlements) free(g_fakeEntitlements);
-        g_fakeEntitlements = nullptr;
+        if (g_fakeEntitlements) { free(g_retiredEntitlements); g_retiredEntitlements = g_fakeEntitlements; g_fakeEntitlements = nullptr; }
         g_shipCount = 0;
         __try { BuildFleetShips(); } __except (EXCEPTION_EXECUTE_HANDLER) { g_shipCount = 0; Log("[fleet] fault while building the ship list"); }
     }
