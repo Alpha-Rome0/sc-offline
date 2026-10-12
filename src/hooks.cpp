@@ -273,6 +273,134 @@ static int        g_shipCount = 0;
 static uint8_t*   g_fakeEntitlements = nullptr;
 static SRWLOCK    g_shipsLock = SRWLOCK_INIT;
 static bool       g_shipsBuilt = false;
+static volatile LONG g_asopListDirty = 0;
+
+// The Vehicles tab's checks, one class name per line in data\asop_ships.txt (beside ships.txt).
+static char    g_asopPick[kMaxFleetShips][64];
+static int     g_asopPickCount = 0;
+static bool    g_asopPicksLoaded = false;
+static SRWLOCK g_asopLock = SRWLOCK_INIT;
+
+static bool AsopPickContainsUnlocked(const char* name) {
+    for (int i = 0; i < g_asopPickCount; ++i)
+        if (_stricmp(g_asopPick[i], name) == 0) return true;
+    return false;
+}
+
+static void LoadAsopPicksUnlocked() {
+    if (g_asopPicksLoaded) return;
+    g_asopPicksLoaded = true;
+    char path[MAX_PATH];
+    if (!DataFilePath(path, sizeof(path), "asop_ships.txt")) return;
+    FILE* f = _fsopen(path, "r", _SH_DENYNO);
+    if (!f) return;
+    char line[128];
+    while (fgets(line, sizeof(line), f) && g_asopPickCount < kMaxFleetShips) {
+        line[strcspn(line, "\r\n#")] = 0;
+        char* name = line + strspn(line, " \t");
+        if (!*name || AsopPickContainsUnlocked(name)) continue;
+        strncpy_s(g_asopPick[g_asopPickCount++], name, _TRUNCATE);
+    }
+    fclose(f);
+}
+
+static void MarkAsopListDirty() { InterlockedExchange(&g_asopListDirty, 1); }
+
+// The terminal asks for its entitlement list whenever it is opened/refreshed. Re-read the file at
+// that point so edits made outside the UI (or by another process) are reflected immediately.
+static void RefreshAsopPicksFromFile() {
+    static char previous[kMaxFleetShips][64];
+    AcquireSRWLockExclusive(&g_asopLock);
+    const int previousCount = g_asopPickCount;
+    if (previousCount) memcpy(previous, g_asopPick, sizeof(g_asopPick[0]) * previousCount);
+    g_asopPickCount = 0;
+    g_asopPicksLoaded = false;
+    LoadAsopPicksUnlocked();
+    const bool changed = previousCount != g_asopPickCount ||
+                         (previousCount && memcmp(previous, g_asopPick, sizeof(g_asopPick[0]) * previousCount) != 0);
+    ReleaseSRWLockExclusive(&g_asopLock);
+    if (changed) MarkAsopListDirty();
+}
+
+static void SaveAsopPicksUnlocked() {
+    char path[MAX_PATH];
+    if (!DataFilePath(path, sizeof(path), "asop_ships.txt")) return;
+    FILE* f = _fsopen(path, "w", _SH_DENYNO);
+    if (!f) { Log("[fleet] couldn't write %s", path); return; }
+    fputs("# Ships checked on the Vehicles tab. An ASOP terminal lists these and no others.\n", f);
+    for (int i = 0; i < g_asopPickCount; ++i) {
+        fputs(g_asopPick[i], f);
+        fputc('\n', f);
+    }
+    fclose(f);
+}
+
+bool Fleet_AsopListed(const char* name) {
+    if (!name || !*name) return false;
+    AcquireSRWLockExclusive(&g_asopLock);
+    LoadAsopPicksUnlocked();
+    const bool on = AsopPickContainsUnlocked(name);
+    ReleaseSRWLockExclusive(&g_asopLock);
+    return on;
+}
+
+int Fleet_AsopListedCount() {
+    AcquireSRWLockExclusive(&g_asopLock);
+    LoadAsopPicksUnlocked();
+    const int n = g_asopPickCount;
+    ReleaseSRWLockExclusive(&g_asopLock);
+    return n;
+}
+
+void Fleet_SetAsopListed(const char* name, bool on) {
+    if (!name || !*name) return;
+    AcquireSRWLockExclusive(&g_asopLock);
+    LoadAsopPicksUnlocked();
+    int found = -1;
+    for (int i = 0; i < g_asopPickCount; ++i)
+        if (_stricmp(g_asopPick[i], name) == 0) { found = i; break; }
+    if (on && found < 0 && g_asopPickCount < kMaxFleetShips)
+        strncpy_s(g_asopPick[g_asopPickCount++], name, _TRUNCATE);
+    else if (!on && found >= 0) {
+        if (found != g_asopPickCount - 1) strncpy_s(g_asopPick[found], g_asopPick[g_asopPickCount - 1], _TRUNCATE);
+        --g_asopPickCount;
+    }
+    SaveAsopPicksUnlocked();
+    ReleaseSRWLockExclusive(&g_asopLock);
+    MarkAsopListDirty();
+}
+
+void Fleet_ReplaceAsopListed(const char* const* names, int count) {
+    AcquireSRWLockExclusive(&g_asopLock);
+    g_asopPicksLoaded = true;
+    g_asopPickCount = 0;
+    if (names) {
+        for (int i = 0; i < count && g_asopPickCount < kMaxFleetShips; ++i) {
+            if (!names[i] || !*names[i] || AsopPickContainsUnlocked(names[i])) continue;
+            strncpy_s(g_asopPick[g_asopPickCount++], names[i], _TRUNCATE);
+        }
+    }
+    SaveAsopPicksUnlocked();
+    ReleaseSRWLockExclusive(&g_asopLock);
+    MarkAsopListDirty();
+}
+
+void Fleet_ClearAsopListed() { Fleet_ReplaceAsopListed(nullptr, 0); }
+
+static int CopyAsopPicks(char (*names)[64]) {
+    AcquireSRWLockExclusive(&g_asopLock);
+    LoadAsopPicksUnlocked();
+    const int count = g_asopPickCount;
+    if (count) memcpy(names, g_asopPick, sizeof(g_asopPick[0]) * count);
+    ReleaseSRWLockExclusive(&g_asopLock);
+    return count;
+}
+
+
+
+
+
+
 
 using StrCtorFn          = void*(__fastcall*)(void* out, const char* s);
 using StrDtorFn          = void(__fastcall*)(void* s);
@@ -331,27 +459,25 @@ static void FindClassGuids(uintptr_t registry, const uintptr_t* classes) {
 }
 
 static int BuildFleetShips() {
-    char path[MAX_PATH];
-    if (!ShipsFilePath(path, sizeof(path)) || !g_tp.entitySystem || !*g_tp.entitySystem) return 0;
-    FILE* f = _fsopen(path, "r", _SH_DENYNO);
-    if (!f) { Log("[fleet] can't open %s", path); return 0; }
+    if (!g_tp.entitySystem || !*g_tp.entitySystem) return 0;
+    static char selected[kMaxFleetShips][64];
     static FleetShip ships[kMaxFleetShips];
     static uintptr_t classes[kMaxFleetShips];
     g_ships = ships;
+    const int selectedCount = CopyAsopPicks(selected);
     int missing = 0;
-    char line[128];
     const uintptr_t registry = VCall<uintptr_t>(*g_tp.entitySystem, 0xC0);
-    while (fgets(line, sizeof(line), f)) {
-        line[strcspn(line, "\r\n#")] = 0;
-        char* name = line + strspn(line, " \t");
-        if (!*name) continue;
-        if (g_shipCount >= kMaxFleetShips) { Log("[fleet] more than %d ships in %s; the rest are left out", kMaxFleetShips, path); break; }
-        const uintptr_t cls = VCall<uintptr_t>(registry, 0x20, static_cast<const char*>(name));
+    for (int i = 0; i < selectedCount; ++i) {
+        const char* name = selected[i];
+        if (g_shipCount >= kMaxFleetShips) {
+            Log("[fleet] more than %d selected ships; the rest are left out", kMaxFleetShips);
+            break;
+        }
+        const uintptr_t cls = VCall<uintptr_t>(registry, 0x20, name);
         if (!cls) { if (++missing <= 5) Log("[fleet] unknown ship class '%s' (skipped)", name); continue; }
         strncpy_s(ships[g_shipCount].name, name, _TRUNCATE);
         classes[g_shipCount++] = cls;
     }
-    fclose(f);
     FindClassGuids(registry, classes);
 
     int kept = 0;
@@ -374,14 +500,19 @@ static int BuildFleetShips() {
         memcpy(e + 0x58, ships[i].guid, 16);
     }
     if (!g_fakeEntitlements) g_shipCount = 0;
-    Log("[fleet] %d ships available in the fleet manager (%d unknown names)", g_shipCount, missing);
+    Log("[fleet] %d selected ships available for the terminals (%d unknown names)", g_shipCount, missing);
     return g_shipCount;
 }
 
 static int EnsureFleetShips() {
+    RefreshAsopPicksFromFile();
     AcquireSRWLockExclusive(&g_shipsLock);
-    if (!g_shipsBuilt) {
+    const bool dirty = InterlockedExchange(&g_asopListDirty, 0) != 0;
+    if (!g_shipsBuilt || dirty) {
         g_shipsBuilt = true;
+        if (g_fakeEntitlements) free(g_fakeEntitlements);
+        g_fakeEntitlements = nullptr;
+        g_shipCount = 0;
         __try { BuildFleetShips(); } __except (EXCEPTION_EXECUTE_HANDLER) { g_shipCount = 0; Log("[fleet] fault while building the ship list"); }
     }
     const int n = g_shipCount;
@@ -393,20 +524,16 @@ static void __fastcall Hook_EntitlementsResult(uintptr_t self, uintptr_t result)
     bool failed = false;
     __try { failed = Rd<uint8_t>(result) != 1; } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (failed && Fleet_UseGameList()) {
-        static volatile LONG told = 0;
-        if (!InterlockedExchange(&told, 1))
-            Log("[fleet] asop_fleet_list = game: the game's own ship list, not ships.txt (its entitlement query failed, so it lists nothing; asop_fleet_list = ships lists ships.txt)");
         g_origEntitlementsResult(self, result);
         return;
     }
-    const int n = failed ? EnsureFleetShips() : 0;
-    if (!n) { g_origEntitlementsResult(self, result); return; }
+    const int n = EnsureFleetShips();
     struct { uint8_t ok; uint8_t pad[7]; uint8_t* begin; uint8_t* end; uint8_t* cap; uint8_t spare[64]; } fake = {};
     fake.ok = 1;
     fake.begin = g_fakeEntitlements;
-    fake.end = fake.cap = g_fakeEntitlements + n * kEntitlementSize;
+    fake.end = fake.cap = n > 0 ? g_fakeEntitlements + n * kEntitlementSize : g_fakeEntitlements;
     static volatile LONG reported = 0;
-    if (InterlockedIncrement(&reported) <= 3) Log("[fleet] online ship list unavailable -> listing %d offline ships", n);
+    if (InterlockedIncrement(&reported) <= 3) Log("[fleet] replacing the game's ship list with %d Vehicles-tab selections", n);
     g_origEntitlementsResult(self, reinterpret_cast<uintptr_t>(&fake));
 }
 
