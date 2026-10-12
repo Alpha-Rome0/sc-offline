@@ -14,38 +14,7 @@ void DrawVehiclesTab(void*, void*) {
     static char filter[64] = "";
     static MenuSpawnOptions opt;
 
-    SectionHeading("Ship terminals (ASOP)");
-    Hint("Check the ships to show at ASOP terminals. This list is saved separately from the full spawn catalogue in ships.txt.");
-    const MenuShip* asopShips = Menu_Ships();
     const int count = Menu_ShipCount();
-    if (count < 0) {
-        Hint("Loading ships (you need to be in the universe)...");
-    } else if (count == 0) {
-        Hint("No ships found. Check data\\ships.txt.");
-    } else {
-        if (ImGui::Button("All")) {
-            const char* names[2048];
-            const int n = count < 2048 ? count : 2048;
-            for (int i = 0; i < n; ++i) names[i] = asopShips[i].name;
-            Fleet_ReplaceAsopListed(names, n);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("None")) Fleet_ClearAsopListed();
-        ImGui::SameLine();
-        ImGui::TextDisabled("%d checked", Fleet_AsopListedCount());
-        static char asopFilter[64] = "";
-        SearchBox("##asopFilter", "Search terminal ships", asopFilter, sizeof(asopFilter));
-        if (ImGui::BeginChild("##asopShips", ImVec2(0, 220), ImGuiChildFlags_Borders)) {
-            for (int i = 0; i < count; ++i) {
-                if (!MatchesFilter(asopShips[i].name, asopFilter)) continue;
-                ImGui::PushID(i);
-                bool on = Fleet_AsopListed(asopShips[i].name);
-                if (ImGui::Checkbox(asopShips[i].name, &on)) Fleet_SetAsopListed(asopShips[i].name, on);
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndChild();
-    }
     SectionHeading("Spawn a ship");
     if (count < 0) {
         Hint("Loading ships (you need to be in the universe)...");
@@ -119,4 +88,36 @@ void DrawVehiclesTab(void*, void*) {
     ImGui::SetItemTooltip("Refills the magazines of the ship you're aboard. Needs the creative plugin (launcher's Plugins page).");
     if (ImGui::Button("Power on / off", ImVec2(-1, 0))) Menu_RequestFlightReady();
     Hint("Toggles Flight Ready on the ship in the Crew tab, as if you pressed R in its pilot seat.");
+
+    SectionHeading("Ship terminals (ASOP)");
+    Hint("Check the ships to show at ASOP terminals. This list is saved separately from the full spawn catalogue in ships.txt.");
+    const MenuShip* asopShips = Menu_Ships();
+    if (count < 0) {
+        Hint("Loading ships (you need to be in the universe)...");
+    } else if (count == 0) {
+        Hint("No ships found. Check data\\ships.txt.");
+    } else {
+        if (ImGui::Button("All")) {
+            const char* names[2048];
+            const int n = count < 2048 ? count : 2048;
+            for (int i = 0; i < n; ++i) names[i] = asopShips[i].name;
+            Fleet_ReplaceAsopListed(names, n);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("None")) Fleet_ClearAsopListed();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%d checked", Fleet_AsopListedCount());
+        static char asopFilter[64] = "";
+        SearchBox("##asopFilter", "Search terminal ships", asopFilter, sizeof(asopFilter));
+        if (ImGui::BeginChild("##asopShips", ImVec2(0, 220), ImGuiChildFlags_Borders)) {
+            for (int i = 0; i < count; ++i) {
+                if (!MatchesFilter(asopShips[i].name, asopFilter)) continue;
+                ImGui::PushID(i);
+                bool on = Fleet_AsopListed(asopShips[i].name);
+                if (ImGui::Checkbox(asopShips[i].name, &on)) Fleet_SetAsopListed(asopShips[i].name, on);
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+    }
 }
